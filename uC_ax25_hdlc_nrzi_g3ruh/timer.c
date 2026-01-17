@@ -2,7 +2,7 @@
  * timer.c
  *
  * Created: 18.04.2024
- * Modified: 25.12.2025
+ * Modified: 16.01.2026
  * Author: DL8MCG
  */ 
 
@@ -16,6 +16,8 @@
 #define oversampling 8
 
 volatile static uint32_t ctc_divider;
+
+volatile static uint8_t clkcnt = 4;
 
 void init_timer_ctc(uint32_t firq)
 {
@@ -32,9 +34,15 @@ void init_timer_ctc(uint32_t firq)
 
 ISR(TIMER1_COMPA_vect)			// IRQ CTC-Timer
 {
-	BITCLK_HIGH;
+	clkcnt--;					// bitclock divider
+	if(!clkcnt)
+	{
+		BITCLK_TOGGLE;			// bitclock
+		clkcnt = 4;
+	}
+	//BITCLK_HIGH;
 	smFSK();
-	BITCLK_LOW;
+	//BITCLK_LOW;
 }
 
 

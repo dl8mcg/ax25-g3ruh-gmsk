@@ -2,7 +2,7 @@
  * timer.h
  *
  * Created: 18.04.2024
- * Modified: 25.12.2025
+ * Modified: 16.01.2026
  * Author: DL8MCG
  */ 
 

@@ -2,7 +2,7 @@
  * hdlc_irq.c
  *
  * Created: 12.05.2024
- * Modified: 11.01.2026
+ * Modified: 16.01.2026
  * Author: DL8MCG
  */ 
 
@@ -14,7 +14,7 @@
 #include "hdlc_irq.h"
 #include "board.h"
 
-static const uint8_t *tx_data_ptr = 0;		// Pointer auf externe Daten
+static const uint8_t *tx_data_ptr = 0;
 
 uint16_t byte_pos; 
 uint8_t HDLCbyte;
@@ -23,7 +23,7 @@ void HDLC_Start();
 void HDLC_SendFlags();
 void HDLC_Run();
 void HDLC_Stop();
-void (* volatile smFSK)(void);		// Funktionszeiger
+void (* volatile smFSK)(void) = HDLC_Stop;		// Funktionszeiger
 
 static uint8_t flagbyte = 0x7E;
 static uint16_t flagcnt;
@@ -55,6 +55,35 @@ const uint8_t PROGMEM LUT[8][NS] =
     { 255,  255,  255,  255,  255,  255,  255,  255 }
 };
 
+// ---------------------------------------------------------
+// G3RUH & NRZI
+// ---------------------------------------------------------
+static inline uint8_t __attribute__((always_inline)) HDLC_CalcBit(uint8_t data_in)
+{
+    uint8_t bit_in = (data_in >> 7) & 1;
+
+    // G3RUH
+    uint8_t fb = ((g3ruh_lsr >> 11) ^ g3ruh_msb) & 1;
+    uint8_t bit_out = bit_in ^ fb;
+
+    g3ruh_msb = (g3ruh_lsr >> 15) & 1;
+    g3ruh_lsr = (g3ruh_lsr << 1) | bit_out;
+
+    // NRZI
+    freq ^= (bit_out == 0);
+    
+    // Daten shiften für nächsten Durchlauf
+    data_in <<= 1;
+
+    // Zähler und State Updates
+    bitcnt = (bitcnt + 1) & 7;
+    ls = ((ls << 1) | freq) & 7;
+    
+    FSKOUT;
+    
+    return data_in; // Gibt das geshiftete Byte zurück
+}
+
 void InitHDLC()
 {
     bitcnt = 0;
@@ -63,20 +92,19 @@ void InitHDLC()
     ls = 0;
     cli();
     ATOMIC_BLOCK(ATOMIC_RESTORESTATE)
-    {smFSK=HDLC_Stop;}        
+    { smFSK=HDLC_Stop; }      
 }
 
 void SendHDLC(const uint8_t * buf, uint16_t size)
 {
     tx_data_ptr = buf;
     
-    byte_pos = 0;   // Reset Position
+    byte_pos = 0; 
     cli();
 
     ATOMIC_BLOCK(ATOMIC_RESTORESTATE)
-    {
-        smFSK = HDLC_Start;
-    }
+    { smFSK = HDLC_Start; }
+		
     bitcnt = 0;
     flagbyte = 0x7E;
     flagcnt = 50; 
@@ -113,31 +141,18 @@ void HDLC_SendFlags()
 {
     if(subcnt == 0)
     {
-        uint8_t bit_in = (flagbyte >> 7) & 1;
+        // Aufruf der Inline Funktion
+        flagbyte = HDLC_CalcBit(flagbyte);
 
-        // G3RUH
-        uint8_t fb = ((g3ruh_lsr >> 11) ^ g3ruh_msb) & 1;
-        uint8_t bit_out = bit_in ^ fb;
-
-        g3ruh_msb = (g3ruh_lsr >> 15) & 1;
-        g3ruh_lsr = (g3ruh_lsr << 1) | bit_out;
-
-        // NRZI
-        freq ^= (bit_out == 0);
-        
-        flagbyte <<= 1;
-
-        bitcnt = (bitcnt + 1) & 7;
-
+        // Spezifische Logik für Flags
         if(bitcnt == 0)
         {
             flagcnt--;
-            if(flagcnt == 0) smFSK = HDLC_Run;
-            else flagbyte = 0x7E;
+            if(flagcnt == 0) 
+				smFSK = HDLC_Run;
+            else 
+				flagbyte = 0x7E;
         }
-
-        ls = ((ls << 1) | freq) & 7;
-        FSKOUT;
     }
 
     DAC = pgm_read_byte(&LUT[ls][subcnt]);
@@ -148,30 +163,21 @@ void HDLC_Run()
 {
     if(subcnt == 0)
     {
+        // Spezifische Logik für Daten-Load
         if(bitcnt == 0)
         {
-            HDLCbyte = tx_data_ptr[byte_pos++];		// Zugriff auf externe daten über byte_pos
+            HDLCbyte = tx_data_ptr[byte_pos++];
             bytecnt--;
         }
 
-        uint8_t bit_in = (HDLCbyte >> 7) & 1;
-        uint8_t fb = ((g3ruh_lsr >> 11) ^ g3ruh_msb) & 1;
-        uint8_t bit_out = bit_in ^ fb;
-        g3ruh_msb = (g3ruh_lsr >> 15) & 1;
-        g3ruh_lsr = (g3ruh_lsr << 1) | bit_out;    
-
-        freq ^= (bit_out == 0);
-
-        HDLCbyte <<= 1;
-        bitcnt = (bitcnt + 1) & 7;
-        ls = ((ls << 1) | freq) & 7;
-    
-        FSKOUT;
+        // Aufruf der Inline Funktion
+        HDLCbyte = HDLC_CalcBit(HDLCbyte);
     }
 
     DAC = pgm_read_byte(&LUT[ls][subcnt]);
     subcnt = (subcnt + 1) & 7;
     
+    // Prüfen ob fertig
     if(!bytecnt && !bitcnt)
     {
         smFSK = HDLC_Stop;

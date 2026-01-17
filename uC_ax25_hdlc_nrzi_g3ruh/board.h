@@ -2,7 +2,7 @@
  * board.h
  *
  * Created: 29.06.2024 
- * Modified: 05.01.2026
+ * Modified: 16.01.2026
  * Author: DL8MCG
  */ 
 

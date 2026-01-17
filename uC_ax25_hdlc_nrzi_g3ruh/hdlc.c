@@ -2,7 +2,7 @@
  * hdlc.c
  *
  * Created: 24.07.2024
- * Modified: 11.01.2026
+ * Modified: 16.01.2026
  * Author: DL8MCG
  */ 
 
@@ -28,7 +28,7 @@ static const uint8_t bitrev[256] PROGMEM =
 };
 
 // --- Hilfsfunktionen ---
-static inline void stuff_byte(uint8_t val, uint8_t *output, uint16_t *out_len, 
+static inline void HDLC_StuffByte(uint8_t val, uint8_t *output, uint16_t *out_len, 
                               uint8_t *byte, int8_t *bit_pos, uint8_t *bit_count)
 {
     if (*out_len >= (MAX_FRAME_LEN - 1)) return;     // Sicherheitscheck gegen Buffer Overflow
@@ -70,11 +70,11 @@ static inline void stuff_byte(uint8_t val, uint8_t *output, uint16_t *out_len,
     }
 }
 
-static inline void HDLC_Step(uint8_t b, uint16_t *crc, uint8_t *output, uint16_t *out_len, 
+static inline void HDLC_EncodeByte(uint8_t b, uint16_t *crc, uint8_t *output, uint16_t *out_len, 
                              uint8_t *byte, int8_t *bit_pos, uint8_t *bit_count)
 {
     uint8_t r = pgm_read_byte(&bitrev[b]);
-    stuff_byte(r, output, out_len, byte, bit_pos, bit_count);
+    HDLC_StuffByte(r, output, out_len, byte, bit_pos, bit_count);
     uint8_t j = (r ^ (*crc >> 8)) & 0xFF;
     *crc = pgm_read_word(&crc_table[j]) ^ (*crc << 8);
 }
@@ -83,10 +83,9 @@ void encode_callsign(uint8_t type, uint8_t* dest, const char* callsign, uint8_t 
 {
     int i;
     for (i = 0; i < 6 && callsign[i]; i++)
-    {
-        dest[i] = callsign[i] << 1;
-    }
-    while (i < 6) dest[i++] = ' ' << 1;
+		dest[i] = callsign[i] << 1;
+    while (i < 6) 
+		dest[i++] = ' ' << 1;
     dest[6] = ((ssid & 0x0F) << 1) | 0x60 | (last ? 0x01 : 0x00) | (type ? 0x80 : 0x00);
 }
 
@@ -107,27 +106,25 @@ int AX25_EncodeHDLC(const char *dest_call, uint8_t dest_ssid,
     // 1. Zieladresse
     encode_callsign(1, addr, dest_call, dest_ssid, 0);
     for(uint8_t i=0; i<7; i++) 
-        HDLC_Step(addr[i], &crc, output, &out_len, &byte, &bit_pos, &bit_count);
+        HDLC_EncodeByte(addr[i], &crc, output, &out_len, &byte, &bit_pos, &bit_count);
 
     // 2. Quelladresse
     encode_callsign(0, addr, src_call, src_ssid, 1);
     for(uint8_t i=0; i<7; i++) 
-        HDLC_Step(addr[i], &crc, output, &out_len, &byte, &bit_pos, &bit_count);
+        HDLC_EncodeByte(addr[i], &crc, output, &out_len, &byte, &bit_pos, &bit_count);
 
     // 3. Control & PID
-    HDLC_Step(control, &crc, output, &out_len, &byte, &bit_pos, &bit_count);
-    HDLC_Step(pid, &crc, output, &out_len, &byte, &bit_pos, &bit_count);
+    HDLC_EncodeByte(control, &crc, output, &out_len, &byte, &bit_pos, &bit_count);
+    HDLC_EncodeByte(pid, &crc, output, &out_len, &byte, &bit_pos, &bit_count);
 
     // 4. Payload (Direkt aus dem übergebenen Pointer)
     for (uint16_t i = 0; i < payload_len; i++)
-    {
-        HDLC_Step((uint8_t)payload[i], &crc, output, &out_len, &byte, &bit_pos, &bit_count);
-    }
+		HDLC_EncodeByte((uint8_t)payload[i], &crc, output, &out_len, &byte, &bit_pos, &bit_count);
 
     // 5. CRC
     crc ^= 0xFFFF;
-    stuff_byte((crc >> 8) & 0xFF, output, &out_len, &byte, &bit_pos, &bit_count);
-    stuff_byte(crc & 0xFF, output, &out_len, &byte, &bit_pos, &bit_count);
+    HDLC_StuffByte((crc >> 8) & 0xFF, output, &out_len, &byte, &bit_pos, &bit_count);
+    HDLC_StuffByte(crc & 0xFF, output, &out_len, &byte, &bit_pos, &bit_count);
 
     // 6. Endflags
     for (uint8_t f = 0; f < 5; f++) 
@@ -135,11 +132,13 @@ int AX25_EncodeHDLC(const char *dest_call, uint8_t dest_ssid,
         uint8_t flag = 0x7E;
         for (int8_t i = 7; i >= 0; i--) 
         {
-            if ((flag >> i) & 1) byte |= (1 << bit_pos);
+            if ((flag >> i) & 1) 
+				byte |= (1 << bit_pos);
             bit_pos--;
             if (bit_pos < 0) 
             {
-                if (out_len < MAX_FRAME_LEN) output[out_len++] = byte;
+                if (out_len < MAX_FRAME_LEN) 
+					output[out_len++] = byte;
                 byte = 0;
                 bit_pos = 7;
             }
@@ -147,9 +146,7 @@ int AX25_EncodeHDLC(const char *dest_call, uint8_t dest_ssid,
     }
 
     if (bit_pos != 7 && out_len < MAX_FRAME_LEN) 
-    {
         output[out_len++] = byte;
-    }
 
     return out_len;
 }
@@ -161,7 +158,7 @@ void SetAX25Text(uint8_t type, const char *dest_call, uint8_t dest_ssid,
     va_list args;
     va_start(args, format);
     
-    vsnprintf(payload_buffer, MAX_PAYLOAD_LEN, format, args); // direkt in den statischen payload_buffer schreiben
+    vsnprintf(payload_buffer, MAX_PAYLOAD_LEN, format, args);	// direkt in den statischen payload_buffer schreiben
     va_end(args);
 
     uint16_t p_len = strlen(payload_buffer);
@@ -173,7 +170,5 @@ void SetAX25Text(uint8_t type, const char *dest_call, uint8_t dest_ssid,
                               hdlc_frame.data);
         
     if(len > 0)
-    {
-        SendHDLC(hdlc_frame.data, len);
-    }
+		SendHDLC(hdlc_frame.data, len);
 }
